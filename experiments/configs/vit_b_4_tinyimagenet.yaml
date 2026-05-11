@@ -1,0 +1,42 @@
+data:
+  dataset: tinyimagenet
+  data_dir: ./data
+  batch_size: 128
+  val_batch_size: 256
+  num_workers: 4
+  augmentation: true
+
+model:
+  arch: vit_b_4
+  num_classes: 200
+  pretrained: false
+
+method:
+  name: mixup
+  mixup_alpha: 1.0
+  prob: 1.0
+
+training:
+  epochs: 1000
+  learning_rate: 0.001
+  momentum: 0.9
+  weight_decay: 0.05
+  optimizer: adamw
+  lr_schedule: cosine
+  warmup_epochs: 10
+  seed: 42
+
+logging:
+  use_wandb: true
+  use_tensorboard: false
+  project_name: mixup-sc
+  experiment_name: vit_b_4_mixup_tinyimagenet
+  log_frequency: 100
+  save_frequency: 100
+
+evaluation:
+  compute_auroc: true
+  compute_aurc: true
+  compute_eaurc: true
+  val_frequency: 10
+  coverage_levels: [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100]

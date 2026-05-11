@@ -1,0 +1,58 @@
+data:
+  augmentation: true
+  batch_size: 128
+  data_dir: ./data
+  dataset: chestmnist
+  num_workers: 4
+  val_batch_size: 256
+evaluation:
+  compute_aurc: true
+  compute_auroc: true
+  compute_eaurc: true
+  coverage_levels:
+  - 0
+  - 5
+  - 10
+  - 15
+  - 20
+  - 25
+  - 30
+  - 35
+  - 40
+  - 45
+  - 50
+  - 55
+  - 60
+  - 65
+  - 70
+  - 75
+  - 80
+  - 85
+  - 90
+  - 95
+  - 100
+  val_frequency: 1
+logging:
+  experiment_name: test_chestmnist_final
+  log_frequency: 100
+  project_name: mixup-sc
+  save_frequency: 10
+  use_tensorboard: false
+  use_wandb: true
+method:
+  cutmix_alpha: 1.0
+  mixup_alpha: 1.0
+  name: mixup
+  prob: 1.0
+model:
+  arch: resnet18
+  num_classes: 14
+  pretrained: false
+training:
+  epochs: 1
+  learning_rate: 0.1
+  lr_schedule: cosine
+  momentum: 0.9
+  seed: 42
+  warmup_epochs: 5
+  weight_decay: 0.0005

@@ -1,0 +1,42 @@
+# Configuration for Mixup training on CIFAR-10
+data:
+  dataset: cifar10
+  data_dir: ./data
+  batch_size: 128
+  val_batch_size: 256
+  num_workers: 4
+  augmentation: true
+
+model:
+  arch: resnet50
+  num_classes: 10
+  pretrained: false
+
+method:
+  name: mixup
+  mixup_alpha: 1.0
+  prob: 1.0
+
+training:
+  epochs: 200
+  learning_rate: 0.1
+  momentum: 0.9
+  weight_decay: 5e-4
+  lr_schedule: cosine
+  warmup_epochs: 5
+  seed: 42
+
+logging:
+  use_wandb: true
+  use_tensorboard: false
+  project_name: mixup-sc
+  experiment_name: mixup_cifar10_resnet50
+  log_frequency: 100
+  save_frequency: 10
+
+evaluation:
+  compute_auroc: true
+  compute_aurc: true
+  compute_eaurc: true
+  val_frequency: 1
+  coverage_levels: [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100]

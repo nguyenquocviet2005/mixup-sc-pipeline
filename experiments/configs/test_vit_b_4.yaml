@@ -1,0 +1,59 @@
+data:
+  augmentation: true
+  batch_size: 128
+  data_dir: ./data
+  dataset: cifar100
+  num_workers: 4
+  val_batch_size: 256
+evaluation:
+  compute_aurc: true
+  compute_auroc: true
+  compute_eaurc: true
+  coverage_levels:
+  - 0
+  - 5
+  - 10
+  - 15
+  - 20
+  - 25
+  - 30
+  - 35
+  - 40
+  - 45
+  - 50
+  - 55
+  - 60
+  - 65
+  - 70
+  - 75
+  - 80
+  - 85
+  - 90
+  - 95
+  - 100
+  val_frequency: 10
+logging:
+  experiment_name: test_vit_b_4
+  log_frequency: 100
+  project_name: mixup-sc
+  save_frequency: 100
+  use_tensorboard: false
+  use_wandb: false
+method:
+  cutmix_alpha: 1.0
+  mixup_alpha: 1.0
+  name: mixup
+  prob: 1.0
+model:
+  arch: vit_b_4
+  num_classes: 100
+  pretrained: false
+training:
+  epochs: 1
+  learning_rate: 0.001
+  lr_schedule: cosine
+  momentum: 0.9
+  optimizer: adam
+  seed: 42
+  warmup_epochs: 10
+  weight_decay: 0.05
