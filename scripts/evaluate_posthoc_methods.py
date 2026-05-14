@@ -152,12 +152,12 @@ def extract_logits_and_features(model: torch.nn.Module, inputs: torch.Tensor) ->
         return logits, features
 
 
-def collect_outputs(model: torch.nn.Module, loader, device: torch.device):
+def collect_outputs(model: torch.nn.Module, loader, device: torch.device, keep_inputs: bool = False):
     model.eval()
     all_logits = []
     all_features = []
     all_targets = []
-    all_inputs = []
+    all_inputs = [] if keep_inputs else None
 
     with torch.no_grad():
         for inputs, targets in loader:
@@ -166,26 +166,32 @@ def collect_outputs(model: torch.nn.Module, loader, device: torch.device):
             all_logits.append(logits.cpu())
             all_features.append(features.cpu())
             all_targets.append(targets.cpu())
-            all_inputs.append(inputs.cpu())
+            if keep_inputs:
+                all_inputs.append(inputs.cpu())
 
     logits = torch.cat(all_logits, dim=0)
     features = torch.cat(all_features, dim=0)
     targets = torch.cat(all_targets, dim=0)
-    inputs_all = torch.cat(all_inputs, dim=0)
 
     probs = F.softmax(logits, dim=1).numpy()
     preds = np.argmax(probs, axis=1)
     confs = np.max(probs, axis=1)
 
-    return {
+    features_np = features.numpy()
+    targets_np = targets.numpy()
+    del features, targets, all_features, all_targets
+
+    result = {
         "logits": logits,
-        "features": features.numpy(),
-        "targets": targets.numpy(),
-        "inputs": inputs_all.numpy(),
+        "features": features_np,
+        "targets": targets_np,
         "probs": probs,
         "preds": preds,
         "confs": confs,
     }
+    if keep_inputs:
+        result["inputs"] = torch.cat(all_inputs, dim=0).numpy()
+    return result
 
 
 def evaluate_sc_metrics(preds: np.ndarray, confs: np.ndarray, targets: np.ndarray, probs: np.ndarray = None) -> Dict[str, float]:
