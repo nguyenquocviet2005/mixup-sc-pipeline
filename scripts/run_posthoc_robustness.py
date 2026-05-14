@@ -40,16 +40,20 @@ def aggregate_runs(run_payloads):
         for row in payload["results"]:
             method = row["method"]
             if method not in by_method:
-                by_method[method] = {"accuracy": [], "aurc": [], "eaurc": []}
+                by_method[method] = {"accuracy": [], "aurc": [], "eaurc": [], "naurc": [], "auroc": []}
             by_method[method]["accuracy"].append(float(row["accuracy"]))
             by_method[method]["aurc"].append(float(row["aurc"]))
             by_method[method]["eaurc"].append(float(row["eaurc"]))
+            by_method[method]["naurc"].append(float(row["naurc"]))
+            by_method[method]["auroc"].append(float(row["auroc"]))
 
     summary = []
     for method, vals in by_method.items():
         acc_vals = vals["accuracy"]
         aurc_vals = vals["aurc"]
         eaurc_vals = vals["eaurc"]
+        naurc_vals = vals["naurc"]
+        auroc_vals = vals["auroc"]
 
         summary.append(
             {
@@ -61,38 +65,50 @@ def aggregate_runs(run_payloads):
                 "aurc_std": stdev(aurc_vals) if len(aurc_vals) > 1 else 0.0,
                 "eaurc_mean": mean(eaurc_vals),
                 "eaurc_std": stdev(eaurc_vals) if len(eaurc_vals) > 1 else 0.0,
+                "naurc_mean": mean(naurc_vals),
+                "naurc_std": stdev(naurc_vals) if len(naurc_vals) > 1 else 0.0,
+                "auroc_mean": mean(auroc_vals),
+                "auroc_std": stdev(auroc_vals) if len(auroc_vals) > 1 else 0.0,
             }
         )
 
-    # Sort with baseline first, then by AURC mean.
+    # Sort with baseline first, then by NAURC mean.
     baseline = [r for r in summary if r["method"] == "Baseline Mixup"]
     others = [r for r in summary if r["method"] != "Baseline Mixup"]
-    others.sort(key=lambda x: x["aurc_mean"])
+    others.sort(key=lambda x: x["naurc_mean"])
     return baseline + others
 
 
 def print_table(summary):
     print("\nRobustness Summary Across Checkpoints")
     print(
-        f"{'Method':48s} {'Acc (mean±std)':>18s} {'AURC (mean±std)':>20s} {'E-AURC (mean±std)':>22s}"
+        f"{'Method':40s} {'Acc (mean±std)':>18s} {'AUROC (mean±std)':>20s} {'AURC (mean±std)':>20s} {'E-AURC (mean±std)':>20s} {'NAURC (mean±std)':>20s}"
     )
-    print("-" * 118)
+    print("-" * 140)
 
     for r in summary:
         acc = f"{r['accuracy_mean']:.4f}±{r['accuracy_std']:.4f}"
+        auroc = f"{r['auroc_mean']:.4f}±{r['auroc_std']:.4f}"
         aurc = f"{r['aurc_mean']:.4f}±{r['aurc_std']:.4f}"
         eaurc = f"{r['eaurc_mean']:.4f}±{r['eaurc_std']:.4f}"
-        print(f"{r['method'][:48]:48s} {acc:>18s} {aurc:>20s} {eaurc:>22s}")
+        naurc = f"{r['naurc_mean']:.4f}±{r['naurc_std']:.4f}"
+        print(f"{r['method'][:40]:40s} {acc:>18s} {auroc:>20s} {aurc:>20s} {eaurc:>20s} {naurc:>20s}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Robustness runner for post-hoc Mixup SC methods")
     
     # Build dataset choices
-    dataset_choices = ["cifar10", "cifar100", "tinyimagenet"] + list(MEDMNIST_DATASETS.keys())
+    dataset_choices = [
+        "cifar10", "cifar100", "tinyimagenet", "skin_cancer_isic", "chest_xray",
+        "mri_tumor", "alzheimer", "tuberculosis", "sars_cov_2_ct_scan", "chest_ct_scan"
+    ] + list(MEDMNIST_DATASETS.keys())
     
     parser.add_argument("--dataset", type=str, default="cifar100", choices=dataset_choices,
                         help="Dataset to evaluate on (default: cifar100)")
+    parser.add_argument("--arch", type=str, default=None,
+                        choices=["resnet18", "resnet34", "resnet50", "resnet101", "resnet110", "vgg16_bn", "vit_b_16", "vit_b_4", "wrn28_10", "dense", "cmixer"],
+                        help="Model architecture override.")
     parser.add_argument("--checkpoint-dir", type=str, default="./checkpoints")
     parser.add_argument(
         "--checkpoint-glob",
@@ -169,6 +185,8 @@ def main():
             "--output",
             str(out_file),
         ]
+        if args.arch is not None:
+            cmd.extend(["--arch", args.arch])
 
         print(f"\n[Run] epoch={epoch} checkpoint={ckpt.name}")
         subprocess.run(cmd, check=True)
@@ -187,18 +205,17 @@ def main():
             r
             for r in summary
             if r["method"] != "Baseline Mixup"
-            and r["aurc_mean"] < baseline["aurc_mean"]
-            and r["eaurc_mean"] <= baseline["eaurc_mean"]
+            and r["naurc_mean"] < baseline["naurc_mean"]
         ]
         if improved:
-            best = sorted(improved, key=lambda x: x["aurc_mean"])[0]
+            best = sorted(improved, key=lambda x: x["naurc_mean"])[0]
             conclusion = (
                 f"Primary candidate: {best['method']} "
-                f"(AURC {best['aurc_mean']:.4f}±{best['aurc_std']:.4f} vs "
-                f"baseline {baseline['aurc_mean']:.4f}±{baseline['aurc_std']:.4f})."
+                f"(NAURC {best['naurc_mean']:.4f}±{best['naurc_std']:.4f} vs "
+                f"baseline {baseline['naurc_mean']:.4f}±{baseline['naurc_std']:.4f})."
             )
         else:
-            conclusion = "All methods failed to robustly outperform baseline Mixup on mean AURC/E-AURC."
+            conclusion = "All methods failed to robustly outperform baseline Mixup on mean NAURC."
 
     print("\nConclusion:")
     print(conclusion)

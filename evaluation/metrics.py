@@ -34,7 +34,7 @@ class SelectionMetrics:
         coverage_levels: list = None,
     ) -> float:
         """
-        Compute AURC (Area Under Risk-Coverage curve).
+        Compute AURC (Area Under Risk-Coverage curve) using the unbiased sample-by-sample integration.
 
         Measures risk (error rate) at different coverage levels.
         Lower AURC is better.
@@ -42,42 +42,25 @@ class SelectionMetrics:
         Args:
             confidences: Model confidence/max probability [0,1]
             correctness: Binary correctness labels {0, 1}
-            coverage_levels: Coverage percentages to evaluate [0-100]
+            coverage_levels: Ignored. Maintained for backwards compatibility.
 
         Returns:
             AURC value [0, 1]
         """
-        if coverage_levels is None:
-            coverage_levels = list(range(0, 101, 5))
-
         # Sort by confidence (descending)
         n = len(confidences)
         sorted_idx = np.argsort(-confidences)
+        sorted_correctness = correctness[sorted_idx]
 
-        risks = []
-        coverages = []
-
-        for cov_level in coverage_levels:
-            # Number of samples to select
-            n_select = max(1, int(n * cov_level / 100))
-            coverage = cov_level / 100.0
-            coverages.append(coverage)
-
-            # Get selected samples
-            selected_correct = correctness[sorted_idx[:n_select]]
-
-            # Risk = error rate
-            if n_select > 0:
-                risk = 1.0 - np.mean(selected_correct)
-            else:
-                risk = 1.0
-
-            risks.append(risk)
-
-        # Compute area under risk-coverage curve
-        # Risk at coverage=0 is undefined, we interpolate
-        aurc = auc(coverages, risks)
-        return aurc
+        risk_list = []
+        current_risk = 0
+        
+        for i in range(n):
+            if sorted_correctness[i] == 0:
+                current_risk += 1
+            risk_list.append(current_risk / (i + 1))
+            
+        return float(np.mean(risk_list))
 
     @staticmethod
     def compute_eaurc(
@@ -86,7 +69,7 @@ class SelectionMetrics:
         coverage_levels: list = None,
     ) -> float:
         """
-        Compute E-AURC (Excess AURC).
+        Compute E-AURC (Excess AURC) using the unbiased formulation.
 
         Normalized AURC that compares to optimal selective classifier.
         E-AURC = AURC - AURC_optimal
@@ -95,55 +78,59 @@ class SelectionMetrics:
         Args:
             confidences: Model confidence/max probability [0,1]
             correctness: Binary correctness labels {0, 1}
-            coverage_levels: Coverage percentages to evaluate [0-100]
+            coverage_levels: Ignored.
 
         Returns:
             E-AURC value [0, 1]
         """
-        if coverage_levels is None:
-            coverage_levels = list(range(0, 101, 5))
+        aurc = SelectionMetrics.compute_aurc(confidences, correctness)
+        r = 1.0 - np.mean(correctness)
+        
+        if r > 0 and r < 1:
+            optimal_risk_area = r + (1 - r) * np.log(1 - r)
+        elif r == 0:
+            optimal_risk_area = 0.0
+        else:
+            optimal_risk_area = 1.0
+            
+        eaurc = aurc - optimal_risk_area
+        return max(0.0, float(eaurc))
 
-        n = len(confidences)
-        sorted_idx = np.argsort(-confidences)
+    @staticmethod
+    def compute_naurc(
+        confidences: np.ndarray,
+        correctness: np.ndarray,
+        coverage_levels: list = None,
+    ) -> float:
+        """
+        Compute NAURC (Normalized AURC) following the FixSelectiveClassification definition.
+        
+        NAURC = E-AURC / E-AURC_random
 
-        risks = []
-        coverages = []
+        Args:
+            confidences: Model confidence/max probability [0,1]
+            correctness: Binary correctness labels {0, 1}
+            coverage_levels: Ignored.
 
-        for cov_level in coverage_levels:
-            n_select = max(1, int(n * cov_level / 100))
-            coverage = cov_level / 100.0
-            coverages.append(coverage)
-
-            selected_correct = correctness[sorted_idx[:n_select]]
-            if n_select > 0:
-                risk = 1.0 - np.mean(selected_correct)
-            else:
-                risk = 1.0
-
-            risks.append(risk)
-
-        # AURC
-        aurc = auc(coverages, risks)
-
-        # Optimal AURC: oracle that perfectly selects correct predictions
-        # Order by correctness (descending)
-        optimal_idx = np.argsort(-correctness)
-        optimal_risks = []
-
-        for cov_level in coverage_levels:
-            n_select = max(1, int(n * cov_level / 100))
-            selected_correct = correctness[optimal_idx[:n_select]]
-            if n_select > 0:
-                risk = 1.0 - np.mean(selected_correct)
-            else:
-                risk = 1.0
-            optimal_risks.append(risk)
-
-        aurc_optimal = auc(coverages, optimal_risks)
-
-        # E-AURC = AURC - AURC_optimal
-        eaurc = aurc - aurc_optimal
-        return max(0, eaurc)  # Clamp to [0, inf)
+        Returns:
+            NAURC value
+        """
+        eaurc = SelectionMetrics.compute_eaurc(confidences, correctness)
+        r = 1.0 - np.mean(correctness)
+        
+        if r > 0 and r < 1:
+            optimal_risk_area = r + (1 - r) * np.log(1 - r)
+        elif r == 0:
+            optimal_risk_area = 0.0
+        else:
+            optimal_risk_area = 1.0
+            
+        if (r - optimal_risk_area) > 0:
+            naurc = eaurc / (r - optimal_risk_area)
+        else:
+            naurc = 0.0
+            
+        return float(naurc)
 
     @staticmethod
     def compute_all_metrics(
@@ -157,18 +144,16 @@ class SelectionMetrics:
         Args:
             confidences: Model confidence/max probability [0,1]
             correctness: Binary correctness labels {0, 1}
-            coverage_levels: Coverage percentages to evaluate [0-100]
+            coverage_levels: Ignored.
 
         Returns:
-            Dictionary with AUROC, AURC, and E-AURC
+            Dictionary with AUROC, AURC, E-AURC, and NAURC
         """
-        if coverage_levels is None:
-            coverage_levels = list(range(0, 101, 5))
-
         return {
-            "auroc": SelectionMetrics.compute_auroc(confidences, correctness),
-            "aurc": SelectionMetrics.compute_aurc(confidences, correctness, coverage_levels),
-            "eaurc": SelectionMetrics.compute_eaurc(confidences, correctness, coverage_levels),
+            "auroc": float(SelectionMetrics.compute_auroc(confidences, correctness)),
+            "aurc": float(SelectionMetrics.compute_aurc(confidences, correctness)),
+            "eaurc": float(SelectionMetrics.compute_eaurc(confidences, correctness)),
+            "naurc": float(SelectionMetrics.compute_naurc(confidences, correctness)),
         }
 
     @staticmethod

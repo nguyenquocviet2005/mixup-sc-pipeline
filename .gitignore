@@ -2,7 +2,8 @@
 checkpoints/
 checkpoints_converted/
 checkpoints_from_quan/
-data/
+data/*
+!data/*.py
 wandb/
 output/
 results/
