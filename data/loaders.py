@@ -1,5 +1,6 @@
 """Data loading utilities for CIFAR-10/100 and MedMNIST datasets."""
 import os
+import zipfile
 import torch
 from torch.utils.data import DataLoader, Subset, Dataset
 from torchvision import datasets, transforms
@@ -240,9 +241,27 @@ def _resolve_pathmnist_224_root(data_dir: str) -> tuple[Path, bool]:
         Path.cwd().parent / "FMFP" / "data" / "pathmnist_224",
     ]
 
+    invalid_files = []
+    seen_invalid = set()
     for root in candidates:
-        if (root / filename).exists():
+        npz_path = root / filename
+        if not npz_path.exists():
+            continue
+        if zipfile.is_zipfile(npz_path):
             return root, False
+        resolved = npz_path.resolve()
+        if resolved not in seen_invalid:
+            invalid_files.append(npz_path)
+            seen_invalid.add(resolved)
+
+    if invalid_files:
+        invalid_text = "\n".join(f"  - {path}" for path in invalid_files)
+        raise RuntimeError(
+            "Found PathMNIST-224 cache file(s), but they are not valid .npz archives:\n"
+            f"{invalid_text}\n"
+            "Delete the invalid file and rerun, or replace it with the real MedMNIST+ "
+            "pathmnist_224.npz file."
+        )
 
     return data_root / "pathmnist_224", True
 
