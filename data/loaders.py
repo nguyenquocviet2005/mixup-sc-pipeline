@@ -225,6 +225,28 @@ TINYIMAGENET_META = {
 }
 
 
+def _resolve_pathmnist_224_root(data_dir: str) -> tuple[Path, bool]:
+    """Find an existing MedMNIST+ PathMNIST-224 npz root when available."""
+    data_root = Path(data_dir)
+    repo_root = Path(__file__).resolve().parents[1]
+    filename = "pathmnist_224.npz"
+    candidates = [
+        data_root / "pathmnist_224",
+        data_root,
+        repo_root / "data" / "pathmnist_224",
+        repo_root / "data",
+        repo_root.parent / "FMFP" / "data" / "pathmnist_224",
+        Path.cwd() / "FMFP" / "data" / "pathmnist_224",
+        Path.cwd().parent / "FMFP" / "data" / "pathmnist_224",
+    ]
+
+    for root in candidates:
+        if (root / filename).exists():
+            return root, False
+
+    return data_root / "pathmnist_224", True
+
+
 def get_transforms(dataset: str = "cifar10", augmentation: bool = True):
     """Get train and validation transforms for CIFAR."""
     if dataset.lower() == "cifar10":
@@ -488,15 +510,10 @@ def get_medmnist_dataloaders(
         as_rgb = False
         mmap_mode = None
     
-    # Create data directory
+    download = True
     data_root = Path(data_dir)
     if dataset_lower == "pathmnist":
-        candidates = [
-            data_root / "pathmnist_224",
-            Path("../FMFP/data/pathmnist_224"),
-            data_root,
-        ]
-        data_root = next((p for p in candidates if p.exists()), candidates[0])
+        data_root, download = _resolve_pathmnist_224_root(data_dir)
     data_root.mkdir(parents=True, exist_ok=True)
     
     # Dynamically import the correct dataset class using medmnist module
@@ -515,7 +532,7 @@ def get_medmnist_dataloaders(
         # Load MedMNIST datasets (split by official train/val/test)
         full_train_raw = DataClass(
             split="train",
-            download=True,
+            download=download,
             root=str(data_root),
             transform=train_transform,
             as_rgb=as_rgb,
@@ -525,7 +542,7 @@ def get_medmnist_dataloaders(
         
         val_set_raw = DataClass(
             split="val",
-            download=True,
+            download=download,
             root=str(data_root),
             transform=val_transform,
             as_rgb=as_rgb,
@@ -535,7 +552,7 @@ def get_medmnist_dataloaders(
         
         test_set_raw = DataClass(
             split="test",
-            download=True,
+            download=download,
             root=str(data_root),
             transform=val_transform,
             as_rgb=as_rgb,
