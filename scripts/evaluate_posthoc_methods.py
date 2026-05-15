@@ -344,10 +344,142 @@ def method_2_feature_knn_logit_blend(
     return res
 
 
+def method_2_feature_knn_logit_blend_sc_fixed_pred(
+    val_features,
+    val_probs,
+    val_targets,
+    test_features,
+    test_probs,
+    num_classes,
+    train_features=None,
+    train_targets=None,
+    fixed_k=None,
+    fixed_alpha=None,
+    confidence_type="pred_prob",
+):
+    """Feature-kNN confidence re-ranking while keeping base classifier predictions fixed."""
+    feature_norm = "zscore_l2"
+    weights = "distance"
+
+    if train_features is not None and train_targets is not None:
+        ref_features = train_features
+        ref_targets = train_targets
+        calib_features = val_features
+        calib_targets = val_targets
+        calib_base_probs = val_probs
+    else:
+        n = val_features.shape[0]
+        split = n // 2
+        ref_features = val_features[:split]
+        ref_targets = val_targets[:split]
+        calib_features = val_features[split:]
+        calib_targets = val_targets[split:]
+        calib_base_probs = val_probs[split:]
+
+    candidate_k = [3, 5, 10, 20, 30, 50, 75, 100, 150, 200, 250]
+    candidate_k = [k for k in candidate_k if k <= len(ref_features)]
+    candidate_alpha = [0.0, 0.05, 0.1, 0.2, 0.35, 0.5, 0.65, 0.8, 1.0]
+
+    calib_base_preds = np.argmax(calib_base_probs, axis=1)
+
+    best = None
+
+    if fixed_k is not None and fixed_alpha is not None:
+        best = {
+            "k": fixed_k,
+            "alpha": fixed_alpha,
+            "weights": weights,
+            "feature_norm": feature_norm,
+            "confidence_type": confidence_type,
+        }
+    else:
+        ref_f, calib_f, norm_state = _transform_feature_knn_space(
+            ref_features, calib_features, feature_norm
+        )
+        for k in candidate_k:
+            knn = KNeighborsClassifier(n_neighbors=k, weights=weights)
+            knn.fit(ref_f, ref_targets)
+            calib_knn_probs = full_probs_from_knn(knn, calib_f, num_classes)
+
+            for alpha in candidate_alpha:
+                probs = (1.0 - alpha) * calib_base_probs + alpha * calib_knn_probs
+                probs = probs / np.clip(np.sum(probs, axis=1, keepdims=True), 1e-12, None)
+                confs = probs[np.arange(probs.shape[0]), calib_base_preds]
+
+                metrics = evaluate_sc_metrics(calib_base_preds, confs, calib_targets)
+                score = metrics["aurc"]
+
+                if best is None or score < best["score"]:
+                    best = {
+                        "score": score,
+                        "k": k,
+                        "alpha": alpha,
+                        "weights": weights,
+                        "feature_norm": feature_norm,
+                        "confidence_type": confidence_type,
+                        "norm_state": norm_state,
+                        "calib_aurc": metrics["aurc"],
+                        "calib_auroc": metrics["auroc"],
+                        "calib_naurc": metrics["naurc"],
+                    }
+
+    fit_features = train_features if train_features is not None and train_targets is not None else val_features
+    fit_targets = train_targets if train_features is not None and train_targets is not None else val_targets
+    fit_f, test_f, _ = _transform_feature_knn_space(
+        fit_features, test_features, best["feature_norm"], best.get("norm_state")
+    )
+
+    knn = KNeighborsClassifier(n_neighbors=best["k"], weights=best["weights"])
+    knn.fit(fit_f, fit_targets)
+
+    test_knn_probs = full_probs_from_knn(knn, test_f, num_classes)
+    test_probs_blend = (1.0 - best["alpha"]) * test_probs + best["alpha"] * test_knn_probs
+    test_probs_blend = test_probs_blend / np.clip(np.sum(test_probs_blend, axis=1, keepdims=True), 1e-12, None)
+
+    test_base_preds = np.argmax(test_probs, axis=1)
+    test_conf = test_probs_blend[np.arange(test_probs_blend.shape[0]), test_base_preds]
+
+    return {
+        "name": "Feature-kNN / Logit Blend (fixed-pred SC)",
+        "params": {
+            "k": int(best["k"]),
+            "alpha": float(best["alpha"]),
+            "weights": best["weights"],
+            "feature_norm": best["feature_norm"],
+            "confidence_type": best["confidence_type"],
+            "calib_aurc": float(best.get("calib_aurc", best.get("score", -1))),
+            "calib_auroc": float(best.get("calib_auroc", -1)),
+            "calib_naurc": float(best.get("calib_naurc", -1)),
+        },
+        "test_probs": np.copy(test_probs),
+        "test_conf_override": test_conf,
+    }
 
 
+def _transform_feature_knn_space(ref_features, other_features, mode, state=None):
+    ref = np.asarray(ref_features, dtype=np.float32)
+    other = np.asarray(other_features, dtype=np.float32)
+    if mode == "raw":
+        return ref, other, {}
 
+    if state is None:
+        state = {}
+    if mode in ["zscore", "zscore_l2"]:
+        mean = state.get("mean")
+        std = state.get("std")
+        if mean is None or std is None:
+            mean = np.mean(ref, axis=0, keepdims=True)
+            std = np.std(ref, axis=0, keepdims=True)
+            std = np.clip(std, 1e-6, None)
+            state = {**state, "mean": mean, "std": std}
+        ref = (ref - mean) / std
+        other = (other - mean) / std
 
+    if mode in ["l2", "zscore_l2"]:
+        ref = ref / np.clip(np.linalg.norm(ref, axis=1, keepdims=True), 1e-12, None)
+        other = other / np.clip(np.linalg.norm(other, axis=1, keepdims=True), 1e-12, None)
+
+    return ref.astype(np.float32), other.astype(np.float32), state
 
 def method_affine_shift_knn(val_features, val_probs, val_targets, test_features, test_probs, num_classes):
     """Affine Feature-Shift (Carratino Correction)."""
@@ -930,6 +1062,52 @@ def method_knn_ood(val_features, test_features, test_probs, k=50):
         "params": {"k": k},
         "test_probs": test_probs,
         "test_conf_override": test_confs,
+    }
+
+
+def method_delta_knn_likelihood_ratio(train_features, train_preds, train_targets, test_features, test_probs, k=25):
+    """Delta-KNN from sc-likelihood-ratios: correct-neighbor score minus wrong-neighbor score."""
+    train_features = np.asarray(train_features, dtype=np.float32)
+    test_features = np.asarray(test_features, dtype=np.float32)
+    train_preds = np.asarray(train_preds)
+    train_targets = np.asarray(train_targets)
+
+    train_norm = train_features / np.clip(np.linalg.norm(train_features, axis=1, keepdims=True), 1e-12, None)
+    test_norm = test_features / np.clip(np.linalg.norm(test_features, axis=1, keepdims=True), 1e-12, None)
+
+    correct_mask = train_preds == train_targets
+    wrong_mask = ~correct_mask
+    correct_features = np.ascontiguousarray(train_norm[correct_mask].astype(np.float32))
+    wrong_features = np.ascontiguousarray(train_norm[wrong_mask].astype(np.float32))
+
+    if len(correct_features) == 0 or len(wrong_features) == 0:
+        return None
+
+    k_eff = min(int(k), len(correct_features), len(wrong_features))
+    correct_index = faiss.IndexFlatL2(correct_features.shape[1])
+    wrong_index = faiss.IndexFlatL2(wrong_features.shape[1])
+    correct_index.add(correct_features)
+    wrong_index.add(wrong_features)
+
+    test_norm = np.ascontiguousarray(test_norm.astype(np.float32))
+    correct_d, _ = correct_index.search(test_norm, k_eff)
+    wrong_d, _ = wrong_index.search(test_norm, k_eff)
+
+    correct_score = -np.log(correct_d + 1e-6).mean(axis=-1)
+    wrong_score = -np.log(wrong_d + 1e-6).mean(axis=-1)
+    test_conf = correct_score - wrong_score
+
+    return {
+        "name": f"Delta-KNN Likelihood Ratio (k={k_eff})",
+        "params": {
+            "k": k_eff,
+            "requested_k": int(k),
+            "num_correct_ref": int(len(correct_features)),
+            "num_wrong_ref": int(len(wrong_features)),
+            "feature_norm": "l2",
+        },
+        "test_probs": test_probs,
+        "test_conf_override": test_conf.astype(np.float32),
     }
 
 
@@ -3714,6 +3892,14 @@ def main():
             test_data["probs"],
             num_classes,
         ),
+        method_delta_knn_likelihood_ratio(
+            train_data["features"],
+            train_data["preds"],
+            train_data["targets"],
+            test_data["features"],
+            test_data["probs"],
+            k=25,
+        ),
 
         # method_residual_mllr_logistic(
         #     val_logits_t,
@@ -3740,14 +3926,14 @@ def main():
         
         # SR_ent and SIRC
         method_sr_ent(test_data["probs"]),
-        *method_vim_and_sirc(
-            torch.from_numpy(train_data["features"]).float().to(device),
-            train_logits_t,
-            torch.from_numpy(test_data["features"]).float().to(device),
-            test_logits_t,
-            test_data["probs"],
-            model,
-        ),
+        # *method_vim_and_sirc(
+        #     torch.from_numpy(train_data["features"]).float().to(device),
+        #     train_logits_t,
+        #     torch.from_numpy(test_data["features"]).float().to(device),
+        #     test_logits_t,
+        #     test_data["probs"],
+        #     model,
+        # ),
 
         # Feature-space kNN blending (Grid Search)
         method_2_feature_knn_logit_blend(
@@ -3759,6 +3945,16 @@ def main():
             num_classes,
         ),
 
+        method_2_feature_knn_logit_blend_sc_fixed_pred(
+            val_data["features"],
+            val_data["probs"],
+            val_data["targets"],
+            test_data["features"],
+            test_data["probs"],
+            num_classes,
+            train_features=train_data["features"],
+            train_targets=train_data["targets"],
+        ),
 
         # method_spherical_feature_knn(
         #     val_data["features"],
